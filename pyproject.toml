@@ -1,0 +1,17 @@
+[project]
+name = "frameforest"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Claude", email = "noreply@anthropic.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "pytransform3d>=3.14.4",
+    "scikit-spatial>=9.0.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.8.17,<0.9.0"]
+build-backend = "uv_build"
