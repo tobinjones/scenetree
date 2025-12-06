@@ -1,7 +1,7 @@
 """Core workspace for managing geometric objects across coordinate frames."""
 
 from dataclasses import dataclass, field
-from typing import Any, Dict
+from typing import Any
 
 from pytransform3d.transform_manager import TransformManager
 
@@ -23,5 +23,5 @@ class Workspace:
                         of frames connected by rigid transforms.
     """
 
-    scenes: Dict[str, Dict[str, Any]] = field(default_factory=dict)
-    configurations: Dict[str, TransformManager] = field(default_factory=dict)
+    scenes: dict[str, dict[str, Any]] = field(default_factory=dict)
+    configurations: dict[str, TransformManager] = field(default_factory=dict)
