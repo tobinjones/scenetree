@@ -167,11 +167,12 @@ class Workspace:
         self._scenes: dict[str, dict[str, Any]] = {}
         self._configurations: dict[str, TransformManager] = {}
 
-    def create_scene(self, name: str) -> Scene:
+    def create_scene(self, name: str, objects: dict[str, Any] | None = None) -> Scene:
         """Create a new scene and return a proxy to it.
 
         Args:
             name: The name for the new scene.
+            objects: Optional dict of objects to populate the scene with.
 
         Returns:
             A Scene proxy for the newly created scene.
@@ -181,7 +182,7 @@ class Workspace:
         """
         if name in self._scenes:
             raise ValueError(f"Scene '{name}' already exists")
-        self._scenes[name] = {}
+        self._scenes[name] = objects.copy() if objects else {}
         return Scene(self, name)
 
     def create_configuration(self, name: str) -> Configuration:
