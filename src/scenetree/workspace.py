@@ -1,12 +1,14 @@
 """Core workspace for managing geometric objects across coordinate frames."""
 
-from collections.abc import Iterator
+from collections import defaultdict
+from collections.abc import Iterable, Iterator
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Self
 
 import numpy as np
 import numpy.typing as npt
 from pytransform3d.transform_manager import TransformManager
+from skspatial.objects import Points
 
 if TYPE_CHECKING:
     from collections.abc import ItemsView
@@ -78,6 +80,33 @@ class Scene:
         """Batch add objects: scene |= {'QP.F1': p1, 'QP.F2': p2}"""
         self.update(objects)
         return self
+
+    def points_from_observations(self, observations: Iterable[tuple[str, npt.ArrayLike]]) -> None:
+        """Add Points objects from an iterable of named point observations.
+
+        Multiple observations with the same object_id are coalesced into a single
+        Points object containing all observed coordinates.
+
+        Args:
+            observations: An iterable of (object_id, coordinates) tuples, where
+                coordinates is an array-like of shape (3,) representing [x, y, z].
+
+        Example:
+            scene.points_from_observations([
+                ("QP.F1", [1, 2, 3]),
+                ("QP.F1", [1.1, 2.1, 3.1]),  # second observation of same point
+                ("QP.F2", [4, 5, 6]),
+            ])
+            # scene["QP.F1"] is now Points([[1, 2, 3], [1.1, 2.1, 3.1]])
+            # scene["QP.F2"] is now Points([[4, 5, 6]])
+        """
+        grouped: dict[str, list[npt.ArrayLike]] = defaultdict(list)
+        for object_id, coords in observations:
+            grouped[object_id].append(coords)
+
+        data = self._get_data()
+        for object_id, coords_list in grouped.items():
+            data[object_id] = Points(coords_list)
 
 
 class Configuration:
