@@ -3,6 +3,7 @@
 from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from copy import deepcopy
+from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Any, Self
 
 import numpy as np
@@ -384,6 +385,54 @@ class View:
             return Points(transformed_coords)
         else:
             return NotImplemented
+
+    def _get_connected_scenes(self) -> list[str]:
+        """Get all scenes connected to the reference scene in the transform graph."""
+        connected = []
+        workspace = self._configuration._workspace
+        for scene_name in workspace._scenes:
+            if scene_name == self._reference_scene:
+                continue
+            try:
+                self._configuration.get_transform(scene_name, self._reference_scene)
+                connected.append(scene_name)
+            except KeyError:
+                # No path to this scene
+                pass
+        return connected
+
+    def query(
+        self,
+        object_query: str = "*",
+        from_scenes: Iterable[str] | None = None,
+    ) -> dict[str, list[Any]]:
+        """Query objects from multiple scenes, transformed into the reference frame.
+
+        Args:
+            object_query: A wildcard pattern to match object IDs (e.g., "QP.*", "*").
+                Uses fnmatch-style matching.
+            from_scenes: Optional list of scene names to query from. If None,
+                queries from all scenes connected to the reference scene.
+
+        Returns:
+            A dict mapping object_id to a list of transformed objects. If the same
+            object_id appears in multiple scenes, all transformed versions are
+            included in the list. Objects that cannot be transformed (unsupported
+            types) are skipped.
+        """
+        scenes_to_query = self._get_connected_scenes() if from_scenes is None else list(from_scenes)
+
+        result: dict[str, list[Any]] = defaultdict(list)
+
+        for scene_name in scenes_to_query:
+            scene = self._configuration._workspace[scene_name]
+            for object_id in scene:
+                if fnmatch(object_id, object_query):
+                    transformed = self.get_object(scene_name, object_id)
+                    if transformed is not NotImplemented:
+                        result[object_id].append(transformed)
+
+        return dict(result)
 
 
 class Workspace:
