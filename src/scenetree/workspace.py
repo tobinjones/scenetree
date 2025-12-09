@@ -90,7 +90,8 @@ class Scene:
         return self
 
     def add_points_from_observations(
-        self, observations: Iterable[tuple[str, npt.ArrayLike]],
+        self,
+        observations: Iterable[tuple[str, npt.ArrayLike]],
     ) -> None:
         """Add Points objects from an iterable of named point observations.
 
@@ -189,7 +190,10 @@ class Configuration:
         return self._workspace._configurations[self._name]
 
     def connect_by_transform(
-        self, from_scene: str, to_scene: str, transform: npt.NDArray[np.floating[Any]],
+        self,
+        from_scene: str,
+        to_scene: str,
+        transform: npt.NDArray[np.floating[Any]],
     ) -> None:
         """Add a transform connecting two scenes.
 
@@ -367,7 +371,9 @@ class View:
         return self._reference_scene
 
     def _transform_point(
-        self, point: npt.NDArray[np.floating[Any]], transform: npt.NDArray[np.floating[Any]],
+        self,
+        point: npt.NDArray[np.floating[Any]],
+        transform: npt.NDArray[np.floating[Any]],
     ) -> npt.NDArray[np.floating[Any]]:
         """Apply a 4x4 homogeneous transform to a 3D point."""
         homogeneous = np.append(point, 1.0)
@@ -375,7 +381,9 @@ class View:
         return transformed[:3]
 
     def _transform_points(
-        self, points: npt.NDArray[np.floating[Any]], transform: npt.NDArray[np.floating[Any]],
+        self,
+        points: npt.NDArray[np.floating[Any]],
+        transform: npt.NDArray[np.floating[Any]],
     ) -> npt.NDArray[np.floating[Any]]:
         """Apply a 4x4 homogeneous transform to an array of 3D points."""
         # points is (n, 3), we need to add homogeneous coordinate
