@@ -20,7 +20,7 @@ class TestSceneDictInterface:
         assert scene["QP.F1"] is p
 
     def test_delitem(self) -> None:
-        """del scene[key] removes the object."""
+        """Del scene[key] removes the object."""
         ws = Workspace()
         scene = ws.create_scene("test", {"QP.F1": Point([1, 2, 3])})
         del scene["QP.F1"]
@@ -41,7 +41,7 @@ class TestSceneDictInterface:
         assert "nonexistent" not in scene
 
     def test_iter(self) -> None:
-        """for key in scene yields object IDs."""
+        """For key in scene yields object IDs."""
         ws = Workspace()
         scene = ws.create_scene("test", {"a": Point([1, 2, 3]), "b": Point([4, 5, 6])})
         assert set(scene) == {"a", "b"}
@@ -69,7 +69,7 @@ class TestSceneDictInterface:
         assert len(scene) == 2
 
     def test_ior_operator(self) -> None:
-        """scene |= dict adds multiple objects."""
+        """Scene |= dict adds multiple objects."""
         ws = Workspace()
         scene = ws.create_scene("test")
         scene |= {"a": Point([1, 2, 3]), "b": Point([4, 5, 6])}
@@ -145,7 +145,7 @@ class TestSceneAddPointsFromObservations:
             [
                 ("a", [1, 2, 3]),
                 ("b", [4, 5, 6]),
-            ]
+            ],
         )
         assert len(scene) == 2
         assert_array_almost_equal(np.asarray(scene["a"]), [[1, 2, 3]])
@@ -160,7 +160,7 @@ class TestSceneAddPointsFromObservations:
                 ("a", [1, 2, 3]),
                 ("a", [1.1, 2.1, 3.1]),
                 ("a", [0.9, 1.9, 2.9]),
-            ]
+            ],
         )
         assert len(scene) == 1
         points = np.asarray(scene["a"])

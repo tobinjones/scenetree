@@ -5,16 +5,20 @@ from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from copy import deepcopy
 from fnmatch import fnmatch
+from types import NotImplementedType
 from typing import TYPE_CHECKING, Any, Self
 
 import numpy as np
 import numpy.typing as npt
 from pytransform3d.transform_manager import TransformManager
 from scipy.spatial.transform import Rotation
-from skspatial.objects import Point, Points
+from skspatial.objects import Line, Point, Points
 
 if TYPE_CHECKING:
     from collections.abc import ItemsView
+
+# Type alias for supported geometric object types
+SupportedObject = Point | Points | Line
 
 
 class Scene:
@@ -31,6 +35,7 @@ class Scene:
         Args:
             workspace: The parent workspace containing the scene data.
             name: The name of this scene.
+
         """
         self._workspace = workspace
         self._name = name
@@ -40,15 +45,15 @@ class Scene:
         """The scene name."""
         return self._name
 
-    def _get_data(self) -> dict[str, Any]:
+    def _get_data(self) -> dict[str, SupportedObject]:
         """Get the underlying data dict, raising KeyError if scene doesn't exist."""
-        return self._workspace._scenes[self._name]
+        return self._workspace._scenes[self._name]  # type: ignore[return-value]
 
-    def __getitem__(self, object_id: str) -> Any:
+    def __getitem__(self, object_id: str) -> SupportedObject:
         """Get an object by ID: scene['QP.F1']"""
         return self._get_data()[object_id]
 
-    def __setitem__(self, object_id: str, data: Any) -> None:
+    def __setitem__(self, object_id: str, data: SupportedObject) -> None:
         """Set an object by ID: scene['QP.F1'] = point"""
         self._get_data()[object_id] = data
 
@@ -68,24 +73,24 @@ class Scene:
         return iter(self._get_data())
 
     def __len__(self) -> int:
-        """Number of objects in scene: len(scene)"""
+        """Return number of objects in scene: len(scene)"""
         return len(self._get_data())
 
-    def items(self) -> "ItemsView[str, Any]":
-        """Dict-like items(): for obj_id, data in scene.items()"""
+    def items(self) -> "ItemsView[str, SupportedObject]":
+        """Return dict-like `items`: for obj_id, data in scene.items()"""
         return self._get_data().items()
 
-    def update(self, objects: dict[str, Any]) -> None:
+    def update(self, objects: dict[str, SupportedObject]) -> None:
         """Batch add objects: scene.update({'QP.F1': p1, 'QP.F2': p2})"""
         self._get_data().update(objects)
 
-    def __ior__(self, objects: dict[str, Any]) -> Self:
+    def __ior__(self, objects: dict[str, SupportedObject]) -> Self:
         """Batch add objects: scene |= {'QP.F1': p1, 'QP.F2': p2}"""
         self.update(objects)
         return self
 
     def add_points_from_observations(
-        self, observations: Iterable[tuple[str, npt.ArrayLike]]
+        self, observations: Iterable[tuple[str, npt.ArrayLike]],
     ) -> None:
         """Add Points objects from an iterable of named point observations.
 
@@ -104,6 +109,7 @@ class Scene:
             ])
             # scene["QP.F1"] is now Points([[1, 2, 3], [1.1, 2.1, 3.1]])
             # scene["QP.F2"] is now Points([[4, 5, 6]])
+
         """
         grouped: dict[str, list[npt.ArrayLike]] = defaultdict(list)
         for object_id, coords in observations:
@@ -128,14 +134,14 @@ class Scene:
         Raises:
             KeyError: If the object doesn't exist.
             TypeError: If the object is not a Point or Points.
+
         """
         obj = self._get_data()[object_id]
         if isinstance(obj, Point):
             return np.asarray(obj)
-        elif isinstance(obj, Points):
+        if isinstance(obj, Points):
             return np.asarray(obj.centroid())
-        else:
-            raise TypeError(f"Expected Point or Points, got {type(obj).__name__}")
+        raise TypeError(f"Expected Point or Points, got {type(obj).__name__}")
 
     def get_mean_points(self) -> dict[str, npt.NDArray[np.floating[Any]]]:
         """Get mean positions for all Point/Points objects in the scene.
@@ -143,6 +149,7 @@ class Scene:
         Returns:
             A dict mapping object_id to a numpy array of shape (3,).
             Only includes objects that are Point or Points instances.
+
         """
         result: dict[str, npt.NDArray[np.floating[Any]]] = {}
         for object_id, obj in self._get_data().items():
@@ -167,6 +174,7 @@ class Configuration:
         Args:
             workspace: The parent workspace containing the configuration data.
             name: The name of this configuration.
+
         """
         self._workspace = workspace
         self._name = name
@@ -181,7 +189,7 @@ class Configuration:
         return self._workspace._configurations[self._name]
 
     def connect_by_transform(
-        self, from_scene: str, to_scene: str, transform: npt.NDArray[np.floating[Any]]
+        self, from_scene: str, to_scene: str, transform: npt.NDArray[np.floating[Any]],
     ) -> None:
         """Add a transform connecting two scenes.
 
@@ -192,6 +200,7 @@ class Configuration:
 
         Raises:
             KeyError: If either scene doesn't exist in the workspace.
+
         """
         if from_scene not in self._workspace._scenes:
             raise KeyError(f"Scene '{from_scene}' does not exist")
@@ -214,6 +223,7 @@ class Configuration:
 
         Raises:
             KeyError: If no path exists between the scenes.
+
         """
         return self._get_tm().get_transform(from_scene, to_scene)
 
@@ -223,6 +233,7 @@ class Configuration:
         Returns:
             A deep copy of the TransformManager, safe to modify without
             affecting the workspace.
+
         """
         return deepcopy(self._get_tm())
 
@@ -236,6 +247,7 @@ class Configuration:
 
         Raises:
             ImportError: If pydot is not installed.
+
         """
         with tempfile.NamedTemporaryFile(suffix=".png") as f:
             self._get_tm().write_png(f.name)
@@ -267,6 +279,7 @@ class Configuration:
         Raises:
             KeyError: If either scene doesn't exist.
             ValueError: If fewer than 3 shared points are found.
+
         """
         from_points_dict = self._workspace[from_scene].get_mean_points()
         to_points_dict = self._workspace[to_scene].get_mean_points()
@@ -297,7 +310,7 @@ class Configuration:
         rotation, _ = Rotation.align_vectors(to_centered, from_centered)
 
         # Build 4x4 homogeneous transform:
-        # T = translate_to @ rotate @ translate_from_inv
+        # translate_to @ rotate @ translate_from_inv
         # Which transforms a point p as: T @ p = to_centroid + R @ (p - from_centroid)
         transform = np.eye(4)
         transform[:3, :3] = rotation.as_matrix()
@@ -322,6 +335,7 @@ class Configuration:
 
         Raises:
             KeyError: If the reference scene doesn't exist.
+
         """
         if reference_scene not in self._workspace._scenes:
             raise KeyError(f"Scene '{reference_scene}' does not exist")
@@ -342,6 +356,7 @@ class View:
         Args:
             configuration: The configuration providing transforms.
             reference_scene: The scene whose coordinate frame to use.
+
         """
         self._configuration = configuration
         self._reference_scene = reference_scene
@@ -352,7 +367,7 @@ class View:
         return self._reference_scene
 
     def _transform_point(
-        self, point: npt.NDArray[np.floating[Any]], transform: npt.NDArray[np.floating[Any]]
+        self, point: npt.NDArray[np.floating[Any]], transform: npt.NDArray[np.floating[Any]],
     ) -> npt.NDArray[np.floating[Any]]:
         """Apply a 4x4 homogeneous transform to a 3D point."""
         homogeneous = np.append(point, 1.0)
@@ -360,7 +375,7 @@ class View:
         return transformed[:3]
 
     def _transform_points(
-        self, points: npt.NDArray[np.floating[Any]], transform: npt.NDArray[np.floating[Any]]
+        self, points: npt.NDArray[np.floating[Any]], transform: npt.NDArray[np.floating[Any]],
     ) -> npt.NDArray[np.floating[Any]]:
         """Apply a 4x4 homogeneous transform to an array of 3D points."""
         # points is (n, 3), we need to add homogeneous coordinate
@@ -369,7 +384,7 @@ class View:
         transformed = (transform @ homogeneous.T).T
         return transformed[:, :3]
 
-    def get_object(self, from_scene: str, object_id: str) -> Point | Points | Any:
+    def get_object(self, from_scene: str, object_id: str) -> SupportedObject | NotImplementedType:
         """Get an object from another scene, transformed into the reference frame.
 
         Args:
@@ -383,6 +398,7 @@ class View:
         Raises:
             KeyError: If the scene or object doesn't exist, or if no transform
                 path exists between the scenes.
+
         """
         # Get the transform from source scene to reference scene
         transform = self._configuration.get_transform(from_scene, self._reference_scene)
@@ -395,12 +411,11 @@ class View:
             coords = np.asarray(obj)
             transformed_coords = self._transform_point(coords, transform)
             return Point(transformed_coords)
-        elif isinstance(obj, Points):
+        if isinstance(obj, Points):
             coords = np.asarray(obj)
             transformed_coords = self._transform_points(coords, transform)
             return Points(transformed_coords)
-        else:
-            return NotImplemented
+        return NotImplemented
 
     def _get_connected_scenes(self) -> list[str]:
         """Get all scenes connected to the reference scene in the transform graph."""
@@ -421,7 +436,7 @@ class View:
         self,
         object_query: str = "*",
         from_scenes: Iterable[str] | None = None,
-    ) -> dict[str, Points | list[Any]]:
+    ) -> dict[str, Points | list[SupportedObject]]:
         """Query objects from multiple scenes, transformed into the reference frame.
 
         Args:
@@ -434,12 +449,13 @@ class View:
             A dict mapping object_id to transformed objects. For Point/Points objects,
             all matching points are consolidated into a single Points object. For other
             types, returns a list of transformed objects. Unsupported types are skipped.
+
         """
         scenes_to_query = self._get_connected_scenes() if from_scenes is None else list(from_scenes)
 
         # Collect point coordinates separately for consolidation
         point_coords: dict[str, list[npt.NDArray[np.floating[Any]]]] = defaultdict(list)
-        other_objects: dict[str, list[Any]] = defaultdict(list)
+        other_objects: dict[str, list[SupportedObject]] = defaultdict(list)
 
         for scene_name in scenes_to_query:
             scene = self._configuration._workspace[scene_name]
@@ -457,13 +473,9 @@ class View:
                         other_objects[object_id].append(transformed)
 
         # Build result: consolidate points into Points objects
-        result: dict[str, Points | list[Any]] = {}
-        for object_id, coords in point_coords.items():
-            result[object_id] = Points(coords)
-        for object_id, objects in other_objects.items():
-            result[object_id] = objects
+        points_objects = {object_id: Points(coords) for object_id, coords in point_coords.items()}
 
-        return result
+        return points_objects | other_objects
 
 
 class Workspace:
@@ -479,7 +491,7 @@ class Workspace:
         self._scenes: dict[str, dict[str, Any]] = {}
         self._configurations: dict[str, TransformManager] = {}
 
-    def create_scene(self, name: str, objects: dict[str, Any] | None = None) -> Scene:
+    def create_scene(self, name: str, objects: dict[str, SupportedObject] | None = None) -> Scene:
         """Create a new scene and return a proxy to it.
 
         Args:
@@ -491,6 +503,7 @@ class Workspace:
 
         Raises:
             ValueError: If a scene with this name already exists.
+
         """
         if name in self._scenes:
             raise ValueError(f"Scene '{name}' already exists")
@@ -508,6 +521,7 @@ class Workspace:
 
         Raises:
             ValueError: If a configuration with this name already exists.
+
         """
         if name in self._configurations:
             raise ValueError(f"Configuration '{name}' already exists")
@@ -525,10 +539,11 @@ class Workspace:
 
         Raises:
             KeyError: If the configuration doesn't exist.
+
         """
         if name not in self._configurations:
             raise KeyError(
-                f"Configuration '{name}' does not exist. Use create_configuration() first."
+                f"Configuration '{name}' does not exist. Use create_configuration() first.",
             )
         return Configuration(self, name)
 
@@ -537,6 +552,7 @@ class Workspace:
 
         Raises:
             KeyError: If the scene doesn't exist (use create_scene first).
+
         """
         if scene not in self._scenes:
             raise KeyError(f"Scene '{scene}' does not exist. Use create_scene() first.")
