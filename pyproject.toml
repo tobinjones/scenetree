@@ -16,6 +16,9 @@ dependencies = [
 requires = ["uv_build>=0.8.17,<0.9.0"]
 build-backend = "uv_build"
 
+[project.optional-dependencies]
+graph = ["pydot>=3.0.0"]
+
 [dependency-groups]
 dev = [
     "ruff>=0.14.8",

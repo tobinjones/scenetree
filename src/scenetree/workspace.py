@@ -1,8 +1,10 @@
 """Core workspace for managing geometric objects across coordinate frames."""
 
+import tempfile
 from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from copy import deepcopy
+from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Any, Self
 
 import numpy as np
@@ -178,7 +180,7 @@ class Configuration:
         """Get the underlying TransformManager."""
         return self._workspace._configurations[self._name]
 
-    def connect(
+    def connect_by_transform(
         self, from_scene: str, to_scene: str, transform: npt.NDArray[np.floating[Any]]
     ) -> None:
         """Add a transform connecting two scenes.
@@ -224,7 +226,22 @@ class Configuration:
         """
         return deepcopy(self._get_tm())
 
-    def best_fit_points(
+    def get_graph_png(self) -> bytes:
+        """Render the transform graph as a PNG image.
+
+        Requires the 'graph' optional dependency: pip install scenetree[graph]
+
+        Returns:
+            PNG image data as bytes.
+
+        Raises:
+            ImportError: If pydot is not installed.
+        """
+        with tempfile.NamedTemporaryFile(suffix=".png") as f:
+            self._get_tm().write_png(f.name)
+            return f.read()
+
+    def connect_by_best_fit_points(
         self,
         from_scene: str,
         to_scene: str,
@@ -290,6 +307,163 @@ class Configuration:
         self._get_tm().add_transform(from_scene, to_scene, transform)
 
         return transform
+
+    def view_from(self, reference_scene: str) -> "View":
+        """Create a View anchored to a reference scene.
+
+        The View allows accessing objects from other scenes transformed
+        into the reference scene's coordinate frame.
+
+        Args:
+            reference_scene: The scene whose coordinate frame to use.
+
+        Returns:
+            A View object for accessing transformed objects.
+
+        Raises:
+            KeyError: If the reference scene doesn't exist.
+        """
+        if reference_scene not in self._workspace._scenes:
+            raise KeyError(f"Scene '{reference_scene}' does not exist")
+        return View(self, reference_scene)
+
+
+class View:
+    """A view into the workspace from a specific scene's coordinate frame.
+
+    Allows accessing objects from other scenes, automatically transformed
+    into the reference scene's coordinate frame using the configuration's
+    transform graph.
+    """
+
+    def __init__(self, configuration: Configuration, reference_scene: str) -> None:
+        """Initialize a view.
+
+        Args:
+            configuration: The configuration providing transforms.
+            reference_scene: The scene whose coordinate frame to use.
+        """
+        self._configuration = configuration
+        self._reference_scene = reference_scene
+
+    @property
+    def reference_scene(self) -> str:
+        """The reference scene name."""
+        return self._reference_scene
+
+    def _transform_point(
+        self, point: npt.NDArray[np.floating[Any]], transform: npt.NDArray[np.floating[Any]]
+    ) -> npt.NDArray[np.floating[Any]]:
+        """Apply a 4x4 homogeneous transform to a 3D point."""
+        homogeneous = np.append(point, 1.0)
+        transformed = transform @ homogeneous
+        return transformed[:3]
+
+    def _transform_points(
+        self, points: npt.NDArray[np.floating[Any]], transform: npt.NDArray[np.floating[Any]]
+    ) -> npt.NDArray[np.floating[Any]]:
+        """Apply a 4x4 homogeneous transform to an array of 3D points."""
+        # points is (n, 3), we need to add homogeneous coordinate
+        n = points.shape[0]
+        homogeneous = np.hstack([points, np.ones((n, 1))])
+        transformed = (transform @ homogeneous.T).T
+        return transformed[:, :3]
+
+    def get_object(self, from_scene: str, object_id: str) -> Point | Points | Any:
+        """Get an object from another scene, transformed into the reference frame.
+
+        Args:
+            from_scene: The scene containing the object.
+            object_id: The object ID to retrieve.
+
+        Returns:
+            The transformed object (Point or Points), or NotImplemented if
+            the object type is not supported.
+
+        Raises:
+            KeyError: If the scene or object doesn't exist, or if no transform
+                path exists between the scenes.
+        """
+        # Get the transform from source scene to reference scene
+        transform = self._configuration.get_transform(from_scene, self._reference_scene)
+
+        # Get the source object
+        source_scene = self._configuration._workspace[from_scene]
+        obj = source_scene[object_id]
+
+        if isinstance(obj, Point):
+            coords = np.asarray(obj)
+            transformed_coords = self._transform_point(coords, transform)
+            return Point(transformed_coords)
+        elif isinstance(obj, Points):
+            coords = np.asarray(obj)
+            transformed_coords = self._transform_points(coords, transform)
+            return Points(transformed_coords)
+        else:
+            return NotImplemented
+
+    def _get_connected_scenes(self) -> list[str]:
+        """Get all scenes connected to the reference scene in the transform graph."""
+        connected = []
+        workspace = self._configuration._workspace
+        for scene_name in workspace._scenes:
+            if scene_name == self._reference_scene:
+                continue
+            try:
+                self._configuration.get_transform(scene_name, self._reference_scene)
+                connected.append(scene_name)
+            except KeyError:
+                # No path to this scene
+                pass
+        return connected
+
+    def query(
+        self,
+        object_query: str = "*",
+        from_scenes: Iterable[str] | None = None,
+    ) -> dict[str, Points | list[Any]]:
+        """Query objects from multiple scenes, transformed into the reference frame.
+
+        Args:
+            object_query: A wildcard pattern to match object IDs (e.g., "QP.*", "*").
+                Uses fnmatch-style matching.
+            from_scenes: Optional list of scene names to query from. If None,
+                queries from all scenes connected to the reference scene.
+
+        Returns:
+            A dict mapping object_id to transformed objects. For Point/Points objects,
+            all matching points are consolidated into a single Points object. For other
+            types, returns a list of transformed objects. Unsupported types are skipped.
+        """
+        scenes_to_query = self._get_connected_scenes() if from_scenes is None else list(from_scenes)
+
+        # Collect point coordinates separately for consolidation
+        point_coords: dict[str, list[npt.NDArray[np.floating[Any]]]] = defaultdict(list)
+        other_objects: dict[str, list[Any]] = defaultdict(list)
+
+        for scene_name in scenes_to_query:
+            scene = self._configuration._workspace[scene_name]
+            for object_id in scene:
+                if fnmatch(object_id, object_query):
+                    transformed = self.get_object(scene_name, object_id)
+                    if transformed is NotImplemented:
+                        continue
+                    if isinstance(transformed, Point):
+                        point_coords[object_id].append(np.asarray(transformed))
+                    elif isinstance(transformed, Points):
+                        # Add each point from the Points object
+                        point_coords[object_id].extend(np.asarray(transformed))
+                    else:
+                        other_objects[object_id].append(transformed)
+
+        # Build result: consolidate points into Points objects
+        result: dict[str, Points | list[Any]] = {}
+        for object_id, coords in point_coords.items():
+            result[object_id] = Points(coords)
+        for object_id, objects in other_objects.items():
+            result[object_id] = objects
+
+        return result
 
 
 class Workspace:
