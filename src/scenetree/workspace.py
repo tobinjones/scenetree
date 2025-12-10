@@ -130,6 +130,7 @@ class Scene:
         id_fstring: str = "{ID}",
         coord_columns: tuple[str, str, str] | None = None,
         coord_units: str | None = None,
+        encoding: str = "utf-8",
     ) -> None:
         """Load point observations from a CSV file.
 
@@ -152,6 +153,8 @@ class Scene:
                 names don't include units. One of "mm", "cm", or "m" (case
                 insensitive). If not provided, units are extracted from column
                 headers.
+            encoding: The character encoding to use when reading the CSV file.
+                Defaults to "utf-8".
 
         Raises:
             ValueError: If columns are missing, units can't be determined, or
@@ -181,7 +184,7 @@ class Scene:
         csv_path = Path(csv_path)
 
         # Read CSV
-        with csv_path.open(encoding="utf-8") as f:
+        with csv_path.open(encoding=encoding) as f:
             reader = csv.DictReader(f)
             if reader.fieldnames is None:
                 msg = "CSV file has no header row"
