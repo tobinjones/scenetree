@@ -1,10 +1,13 @@
 """Core workspace for managing geometric objects across coordinate frames."""
 
+import csv
+import re
 import tempfile
 from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from copy import deepcopy
 from fnmatch import fnmatch
+from pathlib import Path
 from types import NotImplementedType
 from typing import TYPE_CHECKING, Any, Self
 
@@ -119,6 +122,222 @@ class Scene:
         data = self._get_data()
         for object_id, coords_list in grouped.items():
             data[object_id] = Points(coords_list)
+
+    def add_points_from_csv(
+        self,
+        csv_path: str | Path,
+        *,
+        id_column: str = "ID",
+        coord_columns: tuple[str, str, str] | None = None,
+        coord_units: str | None = None,
+    ) -> None:
+        """Load point observations from a CSV file.
+
+        By default, looks for columns named "ID" for object IDs and coordinate
+        columns with format "x [unit]", "y [unit]", "z [unit]" where unit is
+        one of mm, cm, or m (case insensitive). Units can be in brackets [],
+        parentheses (), curly braces {}, or no brackets.
+
+        Coordinates are converted to meters for internal storage.
+
+        Args:
+            csv_path: Path to the CSV file.
+            id_column: Name of the column containing object IDs (case insensitive).
+                Defaults to "ID".
+            coord_columns: Optional tuple of (x_col, y_col, z_col) column names.
+                If provided, these exact names are used instead of auto-detection.
+            coord_units: Required if coord_columns is provided and the column
+                names don't include units. One of "mm", "cm", or "m" (case
+                insensitive). If not provided, units are extracted from column
+                headers.
+
+        Raises:
+            ValueError: If columns are missing, units can't be determined, or
+                units are invalid.
+            FileNotFoundError: If the CSV file doesn't exist.
+
+        Example:
+            Given a CSV file with columns "ID,x [m],y [m],z [m]":
+            scene.add_points_from_csv("points.csv")
+
+            Given a CSV with custom column names "name,foo,bar,qux":
+            scene.add_points_from_csv(
+                "points.csv",
+                id_column="name",
+                coord_columns=("foo", "bar", "qux"),
+                coord_units="mm"
+            )
+
+        """
+        csv_path = Path(csv_path)
+
+        # Read CSV
+        with csv_path.open(encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            if reader.fieldnames is None:
+                msg = "CSV file has no header row"
+                raise ValueError(msg)
+
+            # Normalize fieldnames for case-insensitive lookup
+            fieldnames_lower = {name.lower(): name for name in reader.fieldnames}
+
+            # Find ID column
+            id_col_lower = id_column.lower()
+            if id_col_lower not in fieldnames_lower:
+                raise ValueError(f"ID column '{id_column}' not found in CSV")
+            actual_id_col = fieldnames_lower[id_col_lower]
+
+            # Resolve coordinate columns and units
+            actual_coord_cols, units = self._resolve_coord_columns_and_units(
+                fieldnames_lower,
+                coord_columns,
+                coord_units,
+            )
+
+            # Determine conversion factor to meters
+            unit_to_meters = {"mm": 0.001, "cm": 0.01, "m": 1.0}
+            scale = unit_to_meters[units]
+
+            # Parse rows and build observations
+            observations: list[tuple[str, npt.ArrayLike]] = []
+            for row in reader:
+                object_id = row[actual_id_col].strip()
+                if not object_id:
+                    continue
+
+                try:
+                    coords = [
+                        float(row[actual_coord_cols[0]]) * scale,
+                        float(row[actual_coord_cols[1]]) * scale,
+                        float(row[actual_coord_cols[2]]) * scale,
+                    ]
+                    observations.append((object_id, coords))
+                except (ValueError, KeyError) as e:
+                    msg = f"Invalid coordinate data for object '{object_id}': {e}"
+                    raise ValueError(msg) from e
+
+        # Use existing method to add points
+        self.add_points_from_observations(observations)
+
+    def _resolve_coord_columns_and_units(
+        self,
+        fieldnames_lower: dict[str, str],
+        coord_columns: tuple[str, str, str] | None,
+        coord_units: str | None,
+    ) -> tuple[tuple[str, str, str], str]:
+        """Resolve coordinate column names and units for CSV parsing.
+
+        Args:
+            fieldnames_lower: Dict mapping lowercase fieldname to actual fieldname.
+            coord_columns: User-specified coordinate columns or None.
+            coord_units: User-specified units or None.
+
+        Returns:
+            A tuple of ((x_col, y_col, z_col), units).
+
+        Raises:
+            ValueError: If columns are missing or units can't be determined.
+
+        """
+        if coord_columns is not None:
+            # User specified exact column names
+            # Check all columns exist
+            for col in coord_columns:
+                if col.lower() not in fieldnames_lower:
+                    msg = f"Coordinate column '{col}' not found in CSV"
+                    raise ValueError(msg)
+
+            actual_coord_cols = (
+                fieldnames_lower[coord_columns[0].lower()],
+                fieldnames_lower[coord_columns[1].lower()],
+                fieldnames_lower[coord_columns[2].lower()],
+            )
+
+            # Try to extract units from column names, or use coord_units
+            units = self._extract_units_from_columns(actual_coord_cols)
+            if units is None:
+                if coord_units is None:
+                    msg = (
+                        "Could not determine units from column names. "
+                        "Please provide coord_units parameter."
+                    )
+                    raise ValueError(msg)
+                units = coord_units.lower()
+        else:
+            # Auto-detect coordinate columns
+            actual_coord_cols, units = self._auto_detect_coord_columns(fieldnames_lower)
+
+        # Validate units
+        if units not in {"mm", "cm", "m"}:
+            raise ValueError(f"Invalid units '{units}'. Must be one of: mm, cm, m")
+
+        return actual_coord_cols, units
+
+    def _extract_units_from_columns(self, columns: tuple[str, str, str]) -> str | None:
+        """Try to extract units from coordinate column names.
+
+        Looks for patterns like "x [m]", "y (cm)", "z {mm}", etc.
+
+        Returns:
+            The unit string (mm, cm, or m) if found, None otherwise.
+
+        """
+        # Pattern matches: coord [unit], coord (unit), coord {unit}, or coord unit
+        # where coord is x/y/z and unit is mm/cm/m
+        pattern = r"[xyz]\s*[\[\(\{]?\s*(mm|cm|m)\s*[\]\)\}]?$"
+
+        for col in columns:
+            match = re.search(pattern, col.lower())
+            if match:
+                return match.group(1)
+        return None
+
+    def _auto_detect_coord_columns(
+        self,
+        fieldnames_lower: dict[str, str],
+    ) -> tuple[tuple[str, str, str], str]:
+        """Auto-detect coordinate columns and units from CSV headers.
+
+        Args:
+            fieldnames_lower: Dict mapping lowercase fieldname to actual fieldname.
+
+        Returns:
+            A tuple of ((x_col, y_col, z_col), units).
+
+        Raises:
+            ValueError: If coordinate columns can't be detected.
+
+        """
+        # Pattern to match coordinate columns with units
+        # Matches: "x [m]", "y (cm)", "z {mm}", "x [unit]", etc.
+        coord_pattern = r"^([xyz])\s*[\[\(\{]?\s*(mm|cm|m)\s*[\]\)\}]?$"
+
+        detected: dict[str, tuple[str, str]] = {}  # coord -> (actual_col_name, unit)
+
+        for lower_name, actual_name in fieldnames_lower.items():
+            match = re.match(coord_pattern, lower_name)
+            if match:
+                coord = match.group(1)  # x, y, or z
+                unit = match.group(2)  # mm, cm, or m
+                detected[coord] = (actual_name, unit)
+
+        # Check we found all three coordinates
+        if set(detected.keys()) != {"x", "y", "z"}:
+            msg = (
+                "Could not auto-detect coordinate columns. "
+                f"Expected x, y, z columns with units (mm/cm/m), found: {list(detected.keys())}"
+            )
+            raise ValueError(msg)
+
+        # Check all have the same units
+        units = {unit for _, unit in detected.values()}
+        if len(units) != 1:
+            raise ValueError(f"Coordinate columns have inconsistent units: {units}")
+
+        unit = units.pop()
+        coord_cols = (detected["x"][0], detected["y"][0], detected["z"][0])
+
+        return coord_cols, unit
 
     def get_point(self, object_id: str) -> npt.NDArray[np.floating[Any]]:
         """Get a single 3D position for an object.
