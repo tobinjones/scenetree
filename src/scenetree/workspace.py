@@ -127,7 +127,7 @@ class Scene:
         self,
         csv_path: str | Path,
         *,
-        id_column: str = "ID",
+        id_fstring: str = "{ID}",
         coord_columns: tuple[str, str, str] | None = None,
         coord_units: str | None = None,
     ) -> None:
@@ -142,8 +142,10 @@ class Scene:
 
         Args:
             csv_path: Path to the CSV file.
-            id_column: Name of the column containing object IDs (case insensitive).
-                Defaults to "ID".
+            id_fstring: Format string for generating object IDs from row data.
+                Defaults to "{ID}". Column names are case-sensitive in the format
+                string. Examples: "{Assembly_name} Fiducial {id}", "{ID}".
+                The format string is evaluated as id_fstring.format(**row_dict).
             coord_columns: Optional tuple of (x_col, y_col, z_col) column names.
                 If provided, these exact names are used instead of auto-detection.
             coord_units: Required if coord_columns is provided and the column
@@ -155,15 +157,22 @@ class Scene:
             ValueError: If columns are missing, units can't be determined, or
                 units are invalid.
             FileNotFoundError: If the CSV file doesn't exist.
+            KeyError: If a column referenced in id_fstring is missing from CSV.
 
         Example:
             Given a CSV file with columns "ID,x [m],y [m],z [m]":
             scene.add_points_from_csv("points.csv")
 
+            Given a CSV with custom ID format:
+            scene.add_points_from_csv(
+                "points.csv",
+                id_fstring="{Assembly_name} Fiducial {id}"
+            )
+
             Given a CSV with custom column names "name,foo,bar,qux":
             scene.add_points_from_csv(
                 "points.csv",
-                id_column="name",
+                id_fstring="{name}",
                 coord_columns=("foo", "bar", "qux"),
                 coord_units="mm"
             )
@@ -178,14 +187,8 @@ class Scene:
                 msg = "CSV file has no header row"
                 raise ValueError(msg)
 
-            # Normalize fieldnames for case-insensitive lookup
+            # Normalize fieldnames for case-insensitive lookup (for coord columns only)
             fieldnames_lower = {name.lower(): name for name in reader.fieldnames}
-
-            # Find ID column
-            id_col_lower = id_column.lower()
-            if id_col_lower not in fieldnames_lower:
-                raise ValueError(f"ID column '{id_column}' not found in CSV")
-            actual_id_col = fieldnames_lower[id_col_lower]
 
             # Resolve coordinate columns and units
             actual_coord_cols, units = self._resolve_coord_columns_and_units(
@@ -201,7 +204,13 @@ class Scene:
             # Parse rows and build observations
             observations: list[tuple[str, npt.ArrayLike]] = []
             for row in reader:
-                object_id = row[actual_id_col].strip()
+                # Generate object ID using format string
+                try:
+                    object_id = id_fstring.format(**row).strip()
+                except KeyError as e:
+                    msg = f"Column referenced in id_fstring not found in CSV: {e}"
+                    raise KeyError(msg) from e
+
                 if not object_id:
                     continue
 

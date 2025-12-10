@@ -269,7 +269,7 @@ class TestSceneAddPointsFromCSV:
             scene = ws.create_scene("test")
             scene.add_points_from_csv(
                 csv_path,
-                id_column="name",
+                id_fstring="{name}",
                 coord_columns=("foo", "bar", "qux"),
                 coord_units="mm",
             )
@@ -292,7 +292,7 @@ class TestSceneAddPointsFromCSV:
             scene = ws.create_scene("test")
             scene.add_points_from_csv(
                 csv_path,
-                id_column="name",
+                id_fstring="{name}",
                 coord_columns=("x [mm]", "y [mm]", "z [mm]"),
             )
 
@@ -301,7 +301,7 @@ class TestSceneAddPointsFromCSV:
             Path(csv_path).unlink()
 
     def test_case_insensitive_headers(self) -> None:
-        """Column names are case insensitive."""
+        """Coordinate column names are case insensitive (but id_fstring is case sensitive)."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
             f.write("id,X [M],Y [M],Z [M]\n")
             f.write("F1,1,2,3\n")
@@ -310,7 +310,7 @@ class TestSceneAddPointsFromCSV:
         try:
             ws = Workspace()
             scene = ws.create_scene("test")
-            scene.add_points_from_csv(csv_path)
+            scene.add_points_from_csv(csv_path, id_fstring="{id}")
 
             assert_array_almost_equal(scene.get_point("F1"), [1, 2, 3])
         finally:
@@ -381,7 +381,7 @@ class TestSceneAddPointsFromCSV:
             Path(csv_path).unlink()
 
     def test_missing_id_column_raises(self) -> None:
-        """Missing ID column raises ValueError."""
+        """Missing ID column raises KeyError."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
             f.write("x [m],y [m],z [m]\n")
             f.write("1,2,3\n")
@@ -390,7 +390,7 @@ class TestSceneAddPointsFromCSV:
         try:
             ws = Workspace()
             scene = ws.create_scene("test")
-            with pytest.raises(ValueError, match=r"ID column.*not found"):
+            with pytest.raises(KeyError, match=r"Column referenced in id_fstring"):
                 scene.add_points_from_csv(csv_path)
         finally:
             Path(csv_path).unlink()
